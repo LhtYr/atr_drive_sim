@@ -1,0 +1,43 @@
+# 无感起动默认工况（I/F + STSMO + PLL -> 速度闭环）
+# 目标：建立"无供气空载 + 摩擦"的起动条件（README 4.x / 任务书项目现状所述），
+#       使 I/F 开环起动的电磁转矩（≤K=(3/2)p·ψ_f·I_f≈10.7 N·m，I_f=60 A）能主导转子升速。
+#
+# 关键：默认涡轮容腔预充 4 bar（turbine_view.p_plenum/p_downstream=400000），
+#       起动瞬间向 1 bar 背压吹除，T_turb=power/max(ω,1) 在低速可达 ~73 N·m（远超 I/F 转矩），
+#       把转子甩到数千 rpm（"飞车"），I/F 无法跟随。将容腔初压设为背压即消除该瞬态。
+turbine.p_plenum_init     = 100000.0
+turbine.p_downstream_init = 100000.0
+
+# 气路边界：无供气（m_dot=0），进出口均为环境压 -> 涡轮零转矩
+boundary.turb_p_in   = 100000.0
+boundary.turb_p_out  = 100000.0
+boundary.turb_T_in   = 1000.0
+boundary.turb_m_dot  = 0.0
+
+# 泵边界默认即零负载（pump_p_suction=pump_p_downstream=100000，无绑定键，保持默认）
+
+# ============================ 无感起动整定参数（sensorless.*）============================
+# 下列值 = 编译期默认（定稿整定，推导见 README 4.x 与 model/control/IFStart.c 顶部）。
+# 显式列出以便复现与调参；键优先于命令行 --if-current/--switch-rpm。留空/删除某行则沿用内置默认。
+#
+# --- I/F 开环起动（model/control/IFStart.c）---
+sensorless.if.i_start          = 60.0     # 强制 q 轴电流幅值 A（K=(3/2)p·ψ_f·I_f≈10.7 N·m，7× 空载升速裕度）
+sensorless.if.omega_switch_rpm = 2000.0   # I/F->闭环切换转速 rpm 机械角（E≈24.9 V，STSMO/PLL 信噪比可接受）
+sensorless.if.ramp_time        = 0.3      # 强制转速斜坡时间 s（0 -> omega_switch）
+sensorless.if.damp_k           = 3.5e-3   # 角度修正阻尼时间常数 s（ζ≈0.31，抑制功角振荡）
+sensorless.if.damp_lpf_hz      = 70.0     # 阻尼用 ω̂ 低通截止 Hz（>ω_n 26.5 Hz 保留真实偏差、≪纹波 266 Hz）
+#
+# --- STSMO 超螺旋滑模电流观测器（model/control/STSMO.c，αβ 静止系）---
+sensorless.stsmo.k1            = 5.0      # 超螺旋比例增益（按 E 幅值上界 ω_e·ψ_f 归一化整定）
+sensorless.stsmo.k2            = 3.0e6    # 超螺旋积分增益
+sensorless.stsmo.emf_lpf_hz    = 2000.0   # 反电动势低通截止 Hz（抑制切换抖振；PLL 相位滞后补偿同步此值）
+#
+# --- PLL 锁相环位置估计（model/control/PLL.c）---
+sensorless.pll.kp              = 3000.0   # 比例增益
+sensorless.pll.ki              = 5.0e6    # 积分增益
+#
+# --- 切换状态机（model/control/sensorless.c）---
+sensorless.switch.angle_tol_rad = 0.174532925199433  # PLL 锁定容差 rad（10° -> |ε|<sin(10°) 判锁定）
+sensorless.switch.omega_tol     = 50.0    # |ω̂_e−ω_if_e| 容差 rad/s（电），约 ω_if_e(2000rpm)=419 的 12%
+sensorless.switch.blend_time    = 0.03    # θ_if->θ̂ 最短角差插值过渡时长 s（30 ms，避免转矩冲击）
+

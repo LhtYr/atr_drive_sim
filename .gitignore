@@ -1,0 +1,12 @@
+# 编译产物
+build/
+compile_commands.json
+
+# 仿真输出与绘图结果（make run / make plot 可重新生成）
+results/
+
+# Python 缓存与虚拟环境（可重建，勿入库）
+__pycache__/
+*.pyc
+*.pyo
+.venv/

@@ -1,0 +1,69 @@
+# 无感全包线任务剖面（起动 -> 速度闭环 20000 rpm -> 供气渐增 -> 自动切入发电稳压）
+#
+# 运行：./build/main --sensorless --config config/sensorless_mission.txt --duration 15 \
+#                   --output results/sensorless_mission.csv
+#
+# 剖面时间线（详见 README 4.x 任务剖面推导）：
+#   t = 0        I/F 开环起动（阶段 0），容腔初压=背压 -> 无吹除飞车
+#   t ≈ 0.30 s   PLL 锁定 -> 过渡（阶段 1，θ_if->θ̂ 30 ms 插值）
+#   t ≈ 0.33 s   进入速度闭环（阶段 2），参考斜坡 ~1 s 升至 20000 rpm 并整定
+#   t = 3.0 s    供气延迟斜坡启动（ramp_t_start），此前完全无供气（m_dot=0）
+#   t = 3.0~4.0  供气 0 -> turb_m_dot 线性渐增，涡轮转矩抬升，速度环 iq_ref 渐降守转速
+#   iq_ref(低通) ≤ iq_th 连续 hold_ticks 拍 -> 切入发电（阶段 3，SL_STAGE_GEN）
+#                速度环旁路，电压环成唯一 iq 源，转速解除钳制，由转矩平衡定平衡点
+#   t → 15 s     发电稳态：v_dc 稳至 v_ref，p_inv<0 回馈充电，SOC 上升，转速平衡 < 24500 rpm
+#
+# ============================ 容腔初压（继承 sensorless_start.txt，勿回退）============================
+# 起动段（t < ramp_t_start）完全无供气；容腔初压设为背压消除起动吹除瞬态（否则低速飞车）。
+turbine.p_plenum_init     = 100000.0
+turbine.p_downstream_init = 100000.0
+
+# ============================ 供气延迟斜坡（阶段 2 -> 3 的物理驱动）============================
+# turb_m_dot 直接设定涡轮质量流量（A_duct=0 理想化，p_in 仅 cosmetic）；m_dot_start=0 起坡。
+# ramp_t_start ≥ 3 s：确保起动 + 加速 + 速度环整定全部完成后供气才介入。
+# turb_m_dot 终值整定目标：发电平衡转速 < 24500 rpm（留电压边界 25019 rpm 裕度）。
+#   实测（duration 15 s）：0.4 kg/s -> 平衡 ~22000 rpm，mod_scale 全程 = 1（未触边界）。
+boundary.turb_p_in    = 600000.0
+boundary.turb_p_out   = 100000.0
+boundary.turb_T_in    = 1000.0
+boundary.turb_m_dot   = 0.4      # 供气终值 kg/s（整定平衡转速，0.3~0.6 起调；越大平衡转速越高）
+boundary.m_dot_start  = 0.0      # 斜坡起点 kg/s（从 0 起坡）
+boundary.ramp_time    = 1.0      # 斜坡时长 s（m_dot_start -> turb_m_dot 线性）
+boundary.ramp_t_start = 3.0      # 斜坡延迟起点 s（t < 此值时 turb_m_dot = 0，无供气）
+
+# ============================ 电压环（阶段 3 唯一 iq 源，发电稳压）============================
+# 符号 ev = v_meas - v_ref：发电 iq<0 注入母线抬升 v_dc（唯一稳定方向，严禁改回）。
+# v_ref = 540 = 电池 OCV(SOC≈0.8)，充电使 SOC 缓升、OCV 略高于 540 可达（历史教训：v_ref<OCV 不可达）。
+voltage.kp         = 0.5
+voltage.ki         = 50.0
+voltage.iq_ref_min = -540.0
+voltage.iq_ref_max = 540.0
+sim.v_ref          = 540.0
+
+# ============================ 发电切换判据（阶段 2 -> 3）============================
+# 判据：阶段 2 且参考斜坡到顶（ref_omega_m == omega_ref_mech）且低通后 iq_ref ≤ iq_th
+#       连续 hold_ticks 拍 -> 切入发电。用低通 iq_ref（非瞬时）防纹波误触发。
+# iq_th = +5 A：电机扭矩需求基本消失（供电爬坡期速度环已回馈制动，iq_ref 下穿该阈）。
+# bumpless 交接：切换瞬间 voltage.int_v = iq_ref_now - kp·(v_dc - v_ref)，iq 指令连续无跳变。
+sensorless.gen.iq_th      = 5.0    # 低通 iq_ref 切换阈值 A
+sensorless.gen.hold_ticks = 400    # 连续满足拍数（400 × control_dt 5e-6 = 2 ms 去抖）
+sensorless.gen.iq_lpf_hz  = 50.0   # iq_ref 低通截止 Hz（滤开关纹波，保留守转速趋势）
+
+# ============================ 无感起动整定（继承 sensorless_start.txt，定稿值）============================
+# --- I/F 开环起动（model/control/IFStart.c）---
+sensorless.if.i_start          = 60.0     # 强制 q 轴电流幅值 A（K=(3/2)p·ψ_f·I_f≈10.7 N·m）
+sensorless.if.omega_switch_rpm = 2000.0   # I/F->闭环切换转速 rpm 机械角（E≈24.9 V）
+sensorless.if.ramp_time        = 0.3      # 强制转速斜坡时间 s（0 -> omega_switch）
+sensorless.if.damp_k           = 3.5e-3   # 角度修正阻尼时间常数 s（ζ≈0.31）
+sensorless.if.damp_lpf_hz      = 70.0     # 阻尼用 ω̂ 低通截止 Hz
+# --- STSMO 超螺旋滑模电流观测器（model/control/STSMO.c）---
+sensorless.stsmo.k1            = 5.0      # 超螺旋比例增益
+sensorless.stsmo.k2            = 3.0e6    # 超螺旋积分增益
+sensorless.stsmo.emf_lpf_hz    = 2000.0   # 反电动势低通截止 Hz（PLL 相位滞后补偿同步此值）
+# --- PLL 锁相环位置估计（model/control/PLL.c）---
+sensorless.pll.kp              = 3000.0   # 比例增益
+sensorless.pll.ki              = 5.0e6    # 积分增益
+# --- 切换状态机（model/control/sensorless.c）---
+sensorless.switch.angle_tol_rad = 0.174532925199433  # PLL 锁定容差 rad（10°）
+sensorless.switch.omega_tol     = 50.0    # |ω̂_e−ω_if_e| 容差 rad/s（电）
+sensorless.switch.blend_time    = 0.03    # θ_if->θ̂ 插值过渡时长 s（30 ms）

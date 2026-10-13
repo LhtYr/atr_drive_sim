@@ -1,0 +1,16 @@
+CompileFlags:
+  CompilationDatabase: .
+  Add:
+    - -std=c11
+    - -Wall
+    - -Wextra
+    - -Wshadow
+    - -Iinclude
+    - -Iinclude/component
+    - -Iinclude/control
+    - -Iinclude/solver
+  Remove:
+    - -march=native
+
+Diagnostics:
+  UnusedIncludes: Strict

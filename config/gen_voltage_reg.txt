@@ -1,0 +1,28 @@
+# 发电稳压能力边界测试案例（--control-mode voltage，无弱磁）
+# 运行命令：
+#   make && ./build/main --control-mode voltage --config config/gen_voltage_reg.txt \
+#       --duration 15 --output results/gen_voltage_reg.csv
+# 绘图：python plotting/plot.py --csv results/gen_voltage_reg.csv
+#
+# 工况：电压环为唯一 iq 指令源（速度环旁路，id_ref 恒 0）；供气斜坡由涡轮
+# 拖动转速上扫，反电动势达到 v_dc/√3 ≈ 311.8 V 处（理论临界 25019 rpm）
+# 电流环电压矢量触及 SVPWM 线性区上限，即电压环能力边界。
+
+# ---- 电压环调参（PI -> iq_ref，发电方向 iq < 0，限幅 ±540 A） ----
+voltage.kp = 0.5
+voltage.ki = 50.0
+voltage.iq_ref_min = -540.0
+voltage.iq_ref_max = 540.0
+sim.v_ref = 540.0
+
+# ---- 供气斜坡剖面：10 s 内引气流量 0.3 -> 1.2 kg/s 线性上升后保持 ----
+boundary.m_dot_start = 0.3
+boundary.turb_m_dot = 1.2
+boundary.ramp_time = 10.0
+
+# ---- 气路边界 ----
+# T_in = 1000 K；默认理想直连（A_duct = 0）下引气全量注入前腔，
+# p_in 取覆盖 1.2 kg/s 壅塞喷嘴所需前腔压力（≈466 kPa）的合理供气总压
+boundary.turb_T_in = 1000.0
+boundary.turb_p_in = 600000.0
+boundary.turb_p_out = 100000.0
